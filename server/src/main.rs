@@ -39,7 +39,7 @@ fn create_req() -> PathBuf {
 async fn start_socket() {
     let socket_path = create_req();
     let listener = UnixListener::bind(socket_path).expect("Failed to bind to the UDS LISTENER");
-    let mut download_manager: Arc<Mutex<Option<DownloadManager>>> = Arc::new(Mutex::new(None));
+    let download_manager: Arc<Mutex<Option<DownloadManager>>> = Arc::new(Mutex::new(None));
     loop {
         match listener.accept().await {
             Ok((mut stream, _)) => {
