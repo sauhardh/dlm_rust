@@ -39,7 +39,6 @@ pub(crate) async fn parse_args() -> Result<CommandsValue, Box<dyn std::error::Er
             });
         }
         Commands::Pause { id } => {
-            println!("client pause : {}", id);
             return Ok(CommandsValue {
                 command: "Pause".to_string(),
                 urls: None,

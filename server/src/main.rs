@@ -5,6 +5,7 @@ use tokio;
 use tokio::io::AsyncBufReadExt;
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -69,12 +70,23 @@ async fn start_socket() {
                     }
 
                     "Pause" => {
-                        let id = commands.id.unwrap();
                         let dm = download_manager.lock().await.clone();
                         if let Some(dm) = dm {
-                            tokio::spawn(async move {
-                                dm.pause_downloading(id).await;
-                            });
+                            dm.pause_downloading(commands.id.unwrap()).await;
+                        }
+                    }
+
+                    "Resume" => {
+                        let dm = download_manager.lock().await.clone();
+                        if let Some(dm) = dm {
+                            dm.resume_download(commands.id.unwrap()).await;
+                        }
+                    }
+
+                    "Cancel" => {
+                        let dm = download_manager.lock().await.clone();
+                        if let Some(dm) = dm {
+                            dm.cancel_download(commands.id.unwrap()).await;
                         }
                     }
                     _ => {

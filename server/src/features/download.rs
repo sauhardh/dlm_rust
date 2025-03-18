@@ -1,4 +1,4 @@
-use futures::StreamExt;
+use futures::{lock, StreamExt};
 use reqwest::Client;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -96,52 +96,77 @@ impl DownloadManager {
         }
     }
 
+    pub async fn resume_download(&self, id: usize) {
+        for info in &self.infos {
+            let mut locked_info = info.lock().await;
+            if locked_info.id == id && locked_info.state == State::Paused {
+                locked_info.state = State::Downloading;
+                locked_info.notify.notify_one();
+                break;
+            }
+        }
+    }
+
+    pub async fn cancel_download(&self, id: usize) {
+        for info in &self.infos {
+            let mut locked_info = info.lock().await;
+            if locked_info.id == id {
+                locked_info.state = State::Canceled;
+                break;
+            }
+        }
+    }
+
     #[inline]
     /// Make http request and download the data
     async fn single_download(
         &self,
         single_info: Arc<Mutex<SingleDownload>>,
     ) -> Result<(), DownloadError> {
-        let mut downloaded;
-        let mut stream;
-        let mut file;
-        let tx: UnboundedSender<usize>;
-        {
-            let mut info = single_info.lock().await;
-            downloaded = info.progress;
+        let mut info = single_info.lock().await;
+        let mut downloaded = info.progress;
 
-            let mut http_request = info.client.get(&info.url);
-            if downloaded > 0 {
-                println!("yes in range and downloaded is : {downloaded}");
-                http_request = http_request.header("Range", format!("bytes={}-", downloaded));
-            }
-            let http_response = http_request.send().await?;
+        let http_request = info.client.get(&info.url);
+        // if downloaded > 0 {
+        //     http_request = http_request.header("Range", format!("bytes={}-", downloaded));
+        // // }
+        let http_response = http_request.send().await?;
 
-            info.total_length = http_response.content_length().unwrap_or(0) as usize;
+        info.total_length = http_response.content_length().unwrap_or(0) as usize;
+        let tx = info.tx.clone();
+        info.state = State::Downloading;
 
-            stream = http_response.bytes_stream();
-            file = BufWriter::with_capacity(
-                1024 * 1024,
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&info.destination)
-                    .await?,
-            );
+        let mut stream = http_response.bytes_stream();
+        let mut file = BufWriter::with_capacity(
+            1024 * 1024,
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&info.destination)
+                .await?,
+        );
 
-            tx = info.tx.clone();
-        }
+        drop(info);
 
         while let Some(chunk) = stream.next().await {
-            {
+            let notify = {
                 let info = single_info.lock().await;
                 if info.state == State::Paused {
                     println!("Downloading paused");
-                    info.notify.notified().await;
+                    Some(info.notify.clone())
+                } else {
+                    None
                 }
+            };
 
+            if let Some(notify) = notify {
+                notify.notified().await;
+            }
+
+            {
+                let info = single_info.lock().await;
                 if info.state == State::Canceled {
-                    println!("Downloading cancelled");
+                    drop(info);
                     break;
                 }
             }
@@ -156,6 +181,10 @@ impl DownloadManager {
                 eprintln!("Failed to pass the message through channel.\nInfo: {e}")
             }
         }
+
+        let mut info = single_info.lock().await;
+        info.state = State::Completed;
+        drop(info);
 
         file.flush().await?;
 
