@@ -1,12 +1,25 @@
 use clap::Parser;
 use serde::Deserialize;
 use serde::Serialize;
+use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
 use tokio::net::UnixStream;
 
 use std::path::Path;
+use std::path::PathBuf;
 
 mod cli;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SingleDownload {
+    id: usize,
+    progress: usize,
+    url: String,
+    total_length: usize,
+    destination: PathBuf,
+    state: String,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct CommandsValue {
@@ -22,8 +35,6 @@ pub(crate) async fn parse_args() -> Result<CommandsValue, Box<dyn std::error::Er
     use cli::Commands;
     match args.command {
         Commands::Download { urls } => {
-            println!("Downloading url : {:?}", urls);
-
             if urls.is_empty() {
                 return Err(format!(
                     "Empty field provided. Expected at least one argument, Got {:?}",
@@ -46,7 +57,6 @@ pub(crate) async fn parse_args() -> Result<CommandsValue, Box<dyn std::error::Er
             });
         }
         Commands::Resume { id } => {
-            println!("Resuming of id : {:?}", id);
             return Ok(CommandsValue {
                 command: "Resume".to_string(),
                 urls: None,
@@ -54,7 +64,6 @@ pub(crate) async fn parse_args() -> Result<CommandsValue, Box<dyn std::error::Er
             });
         }
         Commands::Cancel { id } => {
-            println!("Canceling of id : {:?}", id);
             return Ok(CommandsValue {
                 command: "Cancel".to_string(),
                 urls: None,
@@ -62,7 +71,6 @@ pub(crate) async fn parse_args() -> Result<CommandsValue, Box<dyn std::error::Er
             });
         }
         Commands::List => {
-            println!("List all the downloads");
             return Ok(CommandsValue {
                 command: "List".to_string(),
                 urls: None,
@@ -83,6 +91,27 @@ async fn connect_send_socket(command: CommandsValue) -> Result<(), Box<dyn std::
     stream.write_all(b"\n").await?;
     stream.flush().await?;
 
+    let mut buffer = String::new();
+    let mut reader = BufReader::new(&mut stream);
+    reader.read_line(&mut buffer).await.unwrap();
+
+    if buffer.len() > 0 {
+        let buffer = buffer.trim();
+
+        match serde_json::from_str::<Vec<SingleDownload>>(&buffer) {
+            Ok(json_value) => {
+                println!(
+                    "No of downloads: {:#?} \n\n Downloads Info : {:#?}",
+                    json_value.len(),
+                    json_value
+                );
+            }
+            Err(e) => {
+                eprintln!("Failed to parse the JSON response: {e}");
+                return Err(Box::new(e));
+            }
+        }
+    }
     Ok(())
 }
 

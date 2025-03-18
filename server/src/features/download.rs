@@ -1,5 +1,6 @@
-use futures::{lock, StreamExt};
+use futures::StreamExt;
 use reqwest::Client;
+use serde::Serialize;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -16,7 +17,7 @@ use crate::utils::os_download_dir;
 use crate::utils::validate_url;
 use crate::utils::DownloadError;
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug, Serialize)]
 enum State {
     Downloading,
     Paused,
@@ -25,22 +26,30 @@ enum State {
     Pending,
 }
 
-#[derive(Clone, Debug)]
-struct SingleDownload {
+#[derive(Clone, Debug, Serialize)]
+pub struct SingleDownload {
     id: usize,
     progress: usize,
     url: String,
     total_length: usize,
+
+    #[serde(skip_serializing)]
     client: Client,
+
     destination: PathBuf,
+
+    #[serde(skip_serializing)]
     notify: Arc<Notify>,
+
     state: State,
-    tx: UnboundedSender<usize>,
+
+    #[serde(skip_serializing)]
+    tx: UnboundedSender<SingleDownload>,
 }
 
 #[allow(dead_code)]
 impl SingleDownload {
-    pub fn new(url: &str, id: usize, tx: UnboundedSender<usize>) -> Self {
+    pub fn new(url: &str, id: usize, tx: UnboundedSender<SingleDownload>) -> Self {
         SingleDownload {
             id,
             progress: 0,
@@ -59,7 +68,7 @@ impl SingleDownload {
 pub struct DownloadManager {
     no_of_downloads: usize,
     infos: Vec<Arc<Mutex<SingleDownload>>>,
-    rx: Arc<Mutex<UnboundedReceiver<usize>>>,
+    rx: Arc<Mutex<UnboundedReceiver<SingleDownload>>>,
 }
 
 impl DownloadManager {
@@ -107,7 +116,7 @@ impl DownloadManager {
         }
     }
 
-    pub async fn cancel_download(&self, id: usize) {
+    pub async fn cancel_downloading(&self, id: usize) {
         for info in &self.infos {
             let mut locked_info = info.lock().await;
             if locked_info.id == id {
@@ -115,6 +124,17 @@ impl DownloadManager {
                 break;
             }
         }
+    }
+
+    pub async fn list_downloads(self) -> Vec<SingleDownload> {
+        let mut vec = Vec::new();
+        for info in &self.infos {
+            let locked_info = info.lock().await;
+            vec.push(locked_info.clone());
+        }
+
+        println!("Got vec: {vec:#?}");
+        vec
     }
 
     #[inline]
@@ -129,11 +149,10 @@ impl DownloadManager {
         let http_request = info.client.get(&info.url);
         // if downloaded > 0 {
         //     http_request = http_request.header("Range", format!("bytes={}-", downloaded));
-        // // }
+        // }
         let http_response = http_request.send().await?;
 
         info.total_length = http_response.content_length().unwrap_or(0) as usize;
-        let tx = info.tx.clone();
         info.state = State::Downloading;
 
         let mut stream = http_response.bytes_stream();
@@ -172,18 +191,23 @@ impl DownloadManager {
             }
 
             let chunk = chunk?;
+            file.write_all(&chunk).await?;
             downloaded += chunk.len();
 
-            file.write_all(&chunk).await?;
             println!("Written : {downloaded:?}");
 
-            if let Err(e) = tx.send(downloaded) {
-                eprintln!("Failed to pass the message through channel.\nInfo: {e}")
+            let mut info = single_info.lock().await;
+            info.progress = downloaded;
+
+            if let Err(e) = info.tx.send(info.clone()) {
+                eprintln!("Failed to pass the message through channel. \n Info: {e}");
             }
+            drop(info);
         }
 
         let mut info = single_info.lock().await;
         info.state = State::Completed;
+
         drop(info);
 
         file.flush().await?;
@@ -243,7 +267,7 @@ impl DownloadManager {
         let _ = tokio::spawn(async move {
             let mut rx = self.rx.lock().await;
             while let Some(progress) = rx.recv().await {
-                println!("Received Progress: {progress:?}")
+                println!("Received Progress: {:#?}", progress.progress)
             }
         });
 

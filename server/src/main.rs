@@ -3,9 +3,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use tokio;
 use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ fn create_req() -> PathBuf {
     socket_path
 }
 
-async fn start_socket() {
+async fn start_socket() -> Result<(), Box<dyn std::error::Error>> {
     let socket_path = create_req();
     let listener = UnixListener::bind(socket_path).expect("Failed to bind to the UDS LISTENER");
     let download_manager: Arc<Mutex<Option<DownloadManager>>> = Arc::new(Mutex::new(None));
@@ -86,8 +86,22 @@ async fn start_socket() {
                     "Cancel" => {
                         let dm = download_manager.lock().await.clone();
                         if let Some(dm) = dm {
-                            dm.cancel_download(commands.id.unwrap()).await;
+                            dm.cancel_downloading(commands.id.unwrap()).await;
                         }
+                    }
+                    "List" => {
+                        let dm = download_manager.clone().lock().await.clone();
+                        tokio::spawn(async move {
+                            // let dm = download_manager.lock().await.clone();
+                            if let Some(dm) = dm {
+                                let data = dm.list_downloads().await;
+                                let json_data = serde_json::to_string(&data).unwrap();
+                                println!("Json _ data is : {json_data:#?}");
+
+                                stream.write_all(json_data.as_bytes()).await.unwrap();
+                                stream.write_all(b"\n").await.unwrap();
+                            }
+                        });
                     }
                     _ => {
                         println!("UnMatched Command Passed!");
@@ -104,5 +118,7 @@ async fn start_socket() {
 
 #[tokio::main]
 async fn main() {
-    start_socket().await;
+    if let Err(e) = start_socket().await {
+        eprintln!("Error occured\n {:#?}", e);
+    };
 }
