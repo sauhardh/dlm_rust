@@ -23,8 +23,8 @@ struct CommandsValue {
 
 #[inline]
 fn create_req() -> PathBuf {
-    let value = format!("/tmp/{:?}", env!("CARGO_PKG_NAME"));
-    let dir_path = Path::new(&value);
+    // PATH IS CURRENTLY HARDCODED.
+    let dir_path = Path::new("/tmp/dlm_rust");
     let socket_path = dir_path.join("SOCKET");
 
     if !Path::new(dir_path).exists() {

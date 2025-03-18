@@ -1,14 +1,18 @@
 [package]
-name = "doru"
+name = "dlm_server"
 about= "a_cli_based_async_download_manager"
 version = "0.1.0"
 edition = "2021"
 
+[build]
+rustflags=["--cfg", "tokio-unstable"]
+
 [dependencies]
 futures = "0.3.31"
 reqwest = {version = "0.12.14", features= ["stream"]}
-tokio = {version  = "1.44.1" , features = ["full"]}
+tokio = {workspace = true}
+serde = {workspace = true}
+serde_json = {workspace = true}
 url = "2.5.4"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+
 

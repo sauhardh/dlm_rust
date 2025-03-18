@@ -81,9 +81,8 @@ pub(crate) async fn parse_args() -> Result<CommandsValue, Box<dyn std::error::Er
 }
 
 async fn connect_send_socket(command: CommandsValue) -> Result<(), Box<dyn std::error::Error>> {
-    let value = format!("/tmp/{:?}", env!("CARGO_PKG_NAME"));
-    let dir_path = Path::new(&value);
-    let socket_path = dir_path.join("SOCKET");
+    // PATH IS CURRENTLY HARDCODED.
+    let socket_path = Path::new("/tmp/dlm_rust").join("SOCKET");
 
     let mut stream: UnixStream = UnixStream::connect(socket_path).await?;
     let command_str = serde_json::to_string(&command)?;
