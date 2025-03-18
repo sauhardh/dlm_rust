@@ -118,6 +118,8 @@ async fn start_socket() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() {
+    console_subscriber::init();
+
     if let Err(e) = start_socket().await {
         eprintln!("Error occured\n {:#?}", e);
     };

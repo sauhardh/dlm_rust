@@ -4,8 +4,6 @@ about= "a_cli_based_async_download_manager"
 version = "0.1.0"
 edition = "2021"
 
-[build]
-rustflags=["--cfg", "tokio-unstable"]
 
 [dependencies]
 futures = "0.3.31"
@@ -14,5 +12,6 @@ tokio = {workspace = true}
 serde = {workspace = true}
 serde_json = {workspace = true}
 url = "2.5.4"
+console-subscriber = "0.2"
 
 
