@@ -90,27 +90,15 @@ async fn connect_send_socket(command: CommandsValue) -> Result<(), Box<dyn std::
     stream.write_all(b"\n").await?;
     stream.flush().await?;
 
-    let mut buffer = String::new();
-    let mut reader = BufReader::new(&mut stream);
-    reader.read_line(&mut buffer).await.unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
 
-    if buffer.len() > 0 {
-        let buffer = buffer.trim();
-
-        match serde_json::from_str::<Vec<SingleDownload>>(&buffer) {
-            Ok(json_value) => {
-                println!(
-                    "No of downloads: {:#?} \n\n Downloads Info : {:#?}",
-                    json_value.len(),
-                    json_value
-                );
-            }
-            Err(e) => {
-                eprintln!("Failed to parse the JSON response: {e}");
-                return Err(Box::new(e));
-            }
-        }
+    while reader.read_line(&mut line).await.unwrap() > 0 {
+        let progress: Vec<SingleDownload> = serde_json::from_str(&line).unwrap();
+        println!("Hey from client. {:?}", progress[0].progress);
+        line.clear();
     }
+
     Ok(())
 }
 

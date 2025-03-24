@@ -28,8 +28,8 @@ enum State {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SingleDownload {
-    id: usize,
-    progress: usize,
+    pub id: usize,
+    pub progress: usize,
     url: String,
     total_length: usize,
 
@@ -68,7 +68,7 @@ impl SingleDownload {
 pub struct DownloadManager {
     no_of_downloads: usize,
     infos: Vec<Arc<Mutex<SingleDownload>>>,
-    rx: Arc<Mutex<UnboundedReceiver<SingleDownload>>>,
+    pub rx: Arc<Mutex<UnboundedReceiver<SingleDownload>>>,
 }
 
 impl DownloadManager {
@@ -202,12 +202,10 @@ impl DownloadManager {
             if let Err(e) = info.tx.send(info.clone()) {
                 eprintln!("Failed to pass the message through channel. \n Info: {e}");
             }
-            drop(info);
         }
 
         let mut info = single_info.lock().await;
         info.state = State::Completed;
-
         drop(info);
 
         file.flush().await?;
@@ -263,13 +261,6 @@ impl DownloadManager {
                 drop(permit);
             }));
         }
-
-        let _ = tokio::spawn(async move {
-            let mut rx = self.rx.lock().await;
-            while let Some(progress) = rx.recv().await {
-                println!("Received Progress: {:#?}", progress.progress)
-            }
-        });
 
         for task in tasks {
             task.await.unwrap();

@@ -47,12 +47,18 @@ async fn start_socket() -> Result<(), Box<dyn std::error::Error>> {
                 let mut reader = tokio::io::BufReader::new(&mut stream);
                 let mut input = String::new();
 
-                reader
-                    .read_line(&mut input)
-                    .await
-                    .expect("Failed to read command");
+                if reader.read_line(&mut input).await.is_err() {
+                    println!("Failed to read command");
+                    continue;
+                }
 
-                let commands: CommandsValue = serde_json::from_str(&input).unwrap();
+                let commands: CommandsValue = match serde_json::from_str(&input) {
+                    Ok(cmd) => cmd,
+                    Err(err) => {
+                        eprintln!("Invalid JSON command: {err}");
+                        continue;
+                    }
+                };
 
                 if let Some(urls) = commands.urls {
                     let dm = DownloadManager::new(urls);
@@ -61,12 +67,34 @@ async fn start_socket() -> Result<(), Box<dyn std::error::Error>> {
 
                 match commands.command.as_str() {
                     "Download" => {
-                        let dm = download_manager.lock().await.clone();
-                        if let Some(dm) = dm {
-                            tokio::spawn(async move {
+                        let dm = Arc::clone(&download_manager);
+                        tokio::spawn(async move {
+                            let dm = dm.lock().await.clone();
+                            if let Some(dm) = dm {
+                                let mut rx = dm.rx.lock().await;
+                                while let Some(progress) = rx.recv().await {
+                                    println!(
+                                        "Received Progress: {:#?} and id: {:#?}",
+                                        progress.progress, progress.id
+                                    );
+
+                                    let mut data = Vec::new();
+                                    data.push(progress);
+                                    let json_download = serde_json::to_string(&data).unwrap();
+
+                                    stream.write_all(json_download.as_bytes()).await.unwrap();
+                                    stream.write_all(b"\n").await.unwrap();
+                                }
+                            }
+                        });
+
+                        let dm = Arc::clone(&download_manager);
+                        tokio::spawn(async move {
+                            let dm = dm.lock().await.clone();
+                            if let Some(dm) = dm {
                                 dm.download().await;
-                            });
-                        }
+                            }
+                        });
                     }
 
                     "Pause" => {
@@ -98,8 +126,8 @@ async fn start_socket() -> Result<(), Box<dyn std::error::Error>> {
                                 let json_data = serde_json::to_string(&data).unwrap();
                                 println!("Json _ data is : {json_data:#?}");
 
-                                stream.write_all(json_data.as_bytes()).await.unwrap();
-                                stream.write_all(b"\n").await.unwrap();
+                                let _ = stream.write_all(json_data.as_bytes()).await;
+                                let _ = stream.write_all(b"\n").await;
                             }
                         });
                     }
