@@ -1,6 +1,6 @@
 use color_eyre;
 
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{self, KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
@@ -9,49 +9,34 @@ use ratatui::{DefaultTerminal, Frame};
 use serde::{Deserialize, Serialize};
 use strum;
 use strum::IntoEnumIterator;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::watch;
 
 use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::{CommandArgument, SingleDownload};
 
-pub async fn run_tui(
-    command_tx: UnboundedSender<CommandArgument>,
-    mut realtime_rx: UnboundedReceiver<SingleDownload>,
-) -> color_eyre::Result<()> {
-    color_eyre::install()?;
-    let terminal = ratatui::init();
-    let mut app = App::new();
+#[derive(Default, Debug, Clone)]
+struct DownloadingTable {
+    id: u64,
+    name: String,
+    progress: usize,
+    estimated_time: String,
+}
 
-    let table_data = app.table_data.clone();
-    let (update_tx, update_rx) = watch::channel(());
-    tokio::spawn(async move {
-        loop {
-            if let Some(progress) = realtime_rx.recv().await {
-                let mut table = table_data.write().unwrap();
-                table.insert(
-                    progress.id as u64,
-                    DownloadingTable::build(
-                        progress.id as u64,
-                        progress.url,
-                        progress.progress,
-                        "12hr".to_string(),
-                    ),
-                );
-            };
-
-            let _ = update_tx.send(());
+impl DownloadingTable {
+    pub fn build(id: u64, name: String, progress: usize, estimated_time: String) -> Self {
+        Self {
+            id,
+            name,
+            progress,
+            estimated_time,
         }
-    });
-
-    let app_result = app.run(terminal, command_tx, update_rx).await;
-
-    ratatui::restore();
-    app_result
+    }
 }
 
 #[derive(
@@ -86,6 +71,78 @@ impl CommandTab {
         let mut iter = Self::iter().cycle();
         iter.find(|tab| tab.next() == self).unwrap()
     }
+}
+
+enum Event {
+    Input(event::KeyEvent),
+    DownloadUpdate(SingleDownload),
+    Resize,
+    Tick,
+}
+
+fn handle_event(update_tx: UnboundedSender<Event>) {
+    let tick_rate = Duration::from_millis(200);
+    tokio::spawn(async move {
+        let mut last_tick = Instant::now();
+
+        loop {
+            let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+            if event::poll(timeout).unwrap() {
+                match event::read().unwrap() {
+                    event::Event::Key(key) => update_tx.send(Event::Input(key)).unwrap(),
+                    event::Event::Resize(_, _) => update_tx.send(Event::Resize).unwrap(),
+                    _ => {}
+                }
+            }
+
+            if last_tick.elapsed() >= tick_rate {
+                if let Err(e) = update_tx.send(Event::Tick) {
+                    eprintln!("Error occured on updating ui: {:#?}", e);
+                }
+                last_tick = Instant::now();
+            }
+        }
+    });
+}
+
+pub async fn run_tui(
+    command_tx: UnboundedSender<CommandArgument>,
+    mut realtime_rx: UnboundedReceiver<SingleDownload>,
+) -> color_eyre::Result<()> {
+    color_eyre::install()?;
+    let terminal = ratatui::init();
+
+    let mut app = App::new();
+
+    let (update_tx, update_rx) = mpsc::unbounded_channel::<Event>();
+    handle_event(update_tx.clone());
+
+    let tx = update_tx.clone();
+
+    // let table_data = app.table_data.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Some(progress) = realtime_rx.recv().await {
+                // let mut table = table_data.write().unwrap();
+                // table.insert(
+                //     progress.id as u64,
+                //     DownloadingTable::build(
+                //         progress.id as u64,
+                //         progress.url,
+                //         progress.progress,
+                //         "12hr".to_string(),
+                //     ),
+                // );
+
+                tx.send(Event::DownloadUpdate(progress)).unwrap();
+            };
+        }
+    });
+
+    let app_result = app.run(terminal, command_tx, update_rx).await;
+
+    ratatui::restore();
+    app_result
 }
 
 #[derive(Clone)]
@@ -171,23 +228,12 @@ impl HandleInput {
     }
 }
 
-#[derive(Default, Debug, Clone)]
-struct DownloadingTable {
-    id: u64,
-    name: String,
-    progress: usize,
-    estimated_time: String,
-}
-
-impl DownloadingTable {
-    pub fn build(id: u64, name: String, progress: usize, estimated_time: String) -> Self {
-        Self {
-            id,
-            name,
-            progress,
-            estimated_time,
-        }
-    }
+enum TheEvent {
+    Input(event::KeyEvent),
+    Tick,
+    Resize,
+    DownloadUpdate(SingleDownload),
+    DownloadDone,
 }
 
 #[derive(Clone)]
@@ -216,13 +262,12 @@ impl App {
         &mut self,
         mut terminal: DefaultTerminal,
         command_tx: UnboundedSender<CommandArgument>,
-        update_rx: tokio::sync::watch::Receiver<()>,
+        mut update_rx: UnboundedReceiver<Event>,
     ) -> color_eyre::Result<()> {
         loop {
             self.draw_tui(&mut terminal);
-
-            if let Event::Key(key) = event::read()? {
-                match (key.code, key.modifiers) {
+            match update_rx.recv().await.unwrap() {
+                Event::Input(key) => match (key.code, key.modifiers) {
                     (KeyCode::Esc, _) => {
                         return Ok(());
                     }
@@ -252,6 +297,23 @@ impl App {
                     }
 
                     _ => {}
+                },
+                Event::Resize => {
+                    terminal.autoresize()?;
+                }
+
+                Event::Tick => {}
+                Event::DownloadUpdate(progress) => {
+                    let mut table = self.table_data.write().unwrap();
+                    table.insert(
+                        progress.id as u64,
+                        DownloadingTable::build(
+                            progress.id as u64,
+                            progress.url,
+                            progress.progress,
+                            "12hr".to_string(),
+                        ),
+                    );
                 }
             }
         }
