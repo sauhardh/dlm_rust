@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members=["server", "cli_client"]
+members=["server", "client"]
 default-members = ["server"]
 
 [workspace.dependencies]

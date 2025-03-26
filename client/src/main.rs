@@ -1,15 +1,24 @@
-use clap::Parser;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tui::CommandTab;
 
+use std::error::Error;
 use std::path::Path;
 use std::path::PathBuf;
 
-mod cli;
+mod tui;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CommandArgument {
+    command: CommandTab,
+    urls: Option<Vec<String>>,
+    id: Option<usize>,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SingleDownload {
@@ -21,81 +30,53 @@ pub struct SingleDownload {
     state: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct CommandsValue {
-    command: String,
-    urls: Option<Vec<String>>,
-    id: Option<usize>,
+pub async fn connect_socket() -> Result<UnixStream, Box<dyn std::error::Error>> {
+    let socket_path = Path::new("/tmp/dlm_rust").join("SOCKET");
+    let stream: UnixStream = UnixStream::connect(&socket_path).await?;
+
+    Ok(stream)
 }
 
-/// Parse the CLI arguments and executes the commands
-pub(crate) async fn parse_args() -> Result<CommandsValue, Box<dyn std::error::Error>> {
-    let args = cli::Args::parse();
-
-    use cli::Commands;
-    match args.command {
-        Commands::Download { urls } => {
-            if urls.is_empty() {
-                return Err(format!(
-                    "Empty field provided. Expected at least one argument, Got {:?}",
-                    urls.len()
-                )
-                .into());
-            }
-
-            return Ok(CommandsValue {
-                command: "Download".to_string(),
-                urls: Some(urls),
-                id: None,
-            });
-        }
-        Commands::Pause { id } => {
-            return Ok(CommandsValue {
-                command: "Pause".to_string(),
-                urls: None,
-                id: Some(id),
-            });
-        }
-        Commands::Resume { id } => {
-            return Ok(CommandsValue {
-                command: "Resume".to_string(),
-                urls: None,
-                id: Some(id),
-            });
-        }
-        Commands::Cancel { id } => {
-            return Ok(CommandsValue {
-                command: "Cancel".to_string(),
-                urls: None,
-                id: Some(id),
-            });
-        }
-        Commands::List => {
-            return Ok(CommandsValue {
-                command: "List".to_string(),
-                urls: None,
-                id: None,
-            });
+pub async fn send_command(
+    mut write_half: tokio::net::unix::OwnedWriteHalf,
+    mut commands_rx: UnboundedReceiver<CommandArgument>,
+) -> Result<(), Box<dyn Error>> {
+    while let Some(command) = commands_rx.recv().await {
+        if let Ok(command_str) = serde_json::to_string(&command) {
+            write_half.write_all(command_str.as_bytes()).await?;
+            write_half.write_all(b"\n").await?;
+            write_half.flush().await?;
         }
     }
+
+    Ok(())
 }
 
-async fn connect_send_socket(command: CommandsValue) -> Result<(), Box<dyn std::error::Error>> {
-    // PATH IS CURRENTLY HARDCODED.
-    let socket_path = Path::new("/tmp/dlm_rust").join("SOCKET");
+pub async fn receive_progress(
+    read_half: tokio::net::unix::OwnedReadHalf,
+    realtime_tx: UnboundedSender<SingleDownload>,
+) -> Result<(), Box<dyn Error>> {
+    let mut reader = BufReader::new(read_half);
+    let mut line: String = String::new();
 
-    let mut stream: UnixStream = UnixStream::connect(socket_path).await?;
-    let command_str = serde_json::to_string(&command)?;
-    stream.write_all(command_str.as_bytes()).await?;
-    stream.write_all(b"\n").await?;
-    stream.flush().await?;
+    while let Ok(n) = reader.read_line(&mut line).await {
+        if n == 0 {
+            break;
+        }
 
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
+        match serde_json::from_str::<Vec<SingleDownload>>(&line) {
+            Ok(data) => {
+                for each in data {
+                    if let Err(e) = realtime_tx.send(each) {
+                        eprintln!("Error occurent while sending progress through the channel:{e}");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Deserialization Error: {e:#?}");
+            }
+        }
 
-    while reader.read_line(&mut line).await.unwrap() > 0 {
-        let progress: Vec<SingleDownload> = serde_json::from_str(&line).unwrap();
-        println!("Hey from client. {:?}", progress[0].progress);
         line.clear();
     }
 
@@ -104,9 +85,28 @@ async fn connect_send_socket(command: CommandsValue) -> Result<(), Box<dyn std::
 
 #[tokio::main]
 async fn main() {
-    if let Ok(command) = parse_args().await {
-        if let Err(e) = connect_send_socket(command).await {
-            eprintln!("Error occured while connecting and sending to the socket\nInfo: {e:#?}")
-        };
+    match connect_socket().await {
+        Ok(stream) => {
+            let (read_half, write_half) = stream.into_split();
+            let (realtime_tx, realtime_rx) = mpsc::unbounded_channel::<SingleDownload>();
+            let (command_tx, command_rx) = mpsc::unbounded_channel::<CommandArgument>();
+
+            tokio::spawn(async move {
+                if let Err(e) = receive_progress(read_half, realtime_tx).await {
+                    eprintln!("Failed to receive progress: {e}");
+                };
+            });
+
+            tokio::spawn(async move {
+                if let Err(e) = send_command(write_half, command_rx).await {
+                    eprintln!("Failed to send command: {e}");
+                }
+            });
+
+            if let Err(e) = tui::run_tui(command_tx, realtime_rx).await {
+                println!("Failed to run TUI: {:#?}", e);
+            }
+        }
+        Err(e) => eprintln!("The error is occured while connecting : {e:#?}"),
     }
 }

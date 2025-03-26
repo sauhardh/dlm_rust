@@ -14,7 +14,7 @@ use std::sync::Arc;
 mod features;
 mod utils;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct CommandsValue {
     command: String,
     urls: Option<Vec<String>>,
@@ -59,6 +59,7 @@ async fn start_socket() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
                 };
+                println!("command is : {:#?}", commands);
 
                 if let Some(urls) = commands.urls {
                     let dm = DownloadManager::new(urls);
