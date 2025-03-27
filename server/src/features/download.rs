@@ -32,17 +32,12 @@ pub struct SingleDownload {
     pub progress: usize,
     url: String,
     total_length: usize,
-
     #[serde(skip_serializing)]
     client: Client,
-
     destination: PathBuf,
-
     #[serde(skip_serializing)]
     notify: Arc<Notify>,
-
     state: State,
-
     #[serde(skip_serializing)]
     tx: UnboundedSender<SingleDownload>,
 }
@@ -147,9 +142,6 @@ impl DownloadManager {
         let mut downloaded = info.progress;
 
         let http_request = info.client.get(&info.url);
-        // if downloaded > 0 {
-        //     http_request = http_request.header("Range", format!("bytes={}-", downloaded));
-        // }
         let http_response = http_request.send().await?;
 
         info.total_length = http_response.content_length().unwrap_or(0) as usize;
