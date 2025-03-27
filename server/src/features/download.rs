@@ -147,9 +147,6 @@ impl DownloadManager {
         let mut downloaded = info.progress;
 
         let http_request = info.client.get(&info.url);
-        // if downloaded > 0 {
-        //     http_request = http_request.header("Range", format!("bytes={}-", downloaded));
-        // }
         let http_response = http_request.send().await?;
 
         info.total_length = http_response.content_length().unwrap_or(0) as usize;
@@ -206,6 +203,10 @@ impl DownloadManager {
 
         let mut info = single_info.lock().await;
         info.state = State::Completed;
+        if let Err(e) = info.tx.send(info.clone()) {
+            eprintln!("Failed to pass the Final message through channel. \n Info: {e}");
+        }
+
         drop(info);
 
         file.flush().await?;

@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use std::collections::HashMap;
+use std::process;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -25,16 +26,16 @@ struct DownloadingTable {
     id: u64,
     name: String,
     progress: usize,
-    estimated_time: String,
+    status: String,
 }
 
 impl DownloadingTable {
-    pub fn build(id: u64, name: String, progress: usize, estimated_time: String) -> Self {
+    pub fn build(id: u64, name: String, progress: usize, status: String) -> Self {
         Self {
             id,
             name,
             progress,
-            estimated_time,
+            status,
         }
     }
 }
@@ -269,7 +270,7 @@ impl App {
             match update_rx.recv().await.unwrap() {
                 Event::Input(key) => match (key.code, key.modifiers) {
                     (KeyCode::Esc, _) => {
-                        return Ok(());
+                        process::exit(1);
                     }
                     (KeyCode::Backspace, _) => self.input.delete_char(),
                     (KeyCode::Left, _) => self.input.move_cursor_left(),
@@ -311,7 +312,7 @@ impl App {
                             progress.id as u64,
                             progress.url,
                             progress.progress,
-                            "12hr".to_string(),
+                            progress.state,
                         ),
                     );
                 }
@@ -365,7 +366,7 @@ impl App {
         frame.render_widget(input, input_area);
 
         // Table
-        let header = Row::new(vec!["ID", "Name", "Progress", "Estimated Time"]).style(
+        let header = Row::new(vec!["ID", "Name", "Progress", "Status"]).style(
             Style::default()
                 .fg(Color::LightMagenta)
                 .add_modifier(Modifier::BOLD),
@@ -379,7 +380,7 @@ impl App {
                     id.to_string(),
                     data.name.to_string(),
                     data.progress.to_string(),
-                    data.estimated_time.to_string(),
+                    data.status.to_string(),
                 ])
             })
             .collect();
