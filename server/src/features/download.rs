@@ -206,6 +206,9 @@ impl DownloadManager {
 
         let mut info = single_info.lock().await;
         info.state = State::Completed;
+        if let Err(e) = info.tx.send(info.clone()) {
+            eprintln!("Failed to pass the Failed message through channel. \n Info: {e}");
+        }
         drop(info);
 
         file.flush().await?;
