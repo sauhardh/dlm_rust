@@ -1,10 +1,11 @@
 use color_eyre;
 
+use color_eyre::eyre::Ok;
 use ratatui::crossterm::event::{self, KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Row, Table, Tabs};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs};
 use ratatui::{DefaultTerminal, Frame};
 use serde::{Deserialize, Serialize};
 use strum;
@@ -13,7 +14,6 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use std::collections::HashMap;
-use std::process;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -97,8 +97,8 @@ fn handle_event(update_tx: UnboundedSender<Event>) {
             }
 
             if last_tick.elapsed() >= tick_rate {
-                if let Err(e) = update_tx.send(Event::Tick) {
-                    eprintln!("Error occured on updating ui: {:#?}", e);
+                if let Err(_) = update_tx.send(Event::Tick) {
+                    return;
                 }
                 last_tick = Instant::now();
             }
@@ -258,7 +258,7 @@ impl App {
             match update_rx.recv().await.unwrap() {
                 Event::Input(key) => match (key.code, key.modifiers) {
                     (KeyCode::Esc, _) => {
-                        process::exit(1);
+                        return Ok(());
                     }
                     (KeyCode::Backspace, _) => self.input.delete_char(),
                     (KeyCode::Left, _) => self.input.move_cursor_left(),
@@ -354,7 +354,7 @@ impl App {
         frame.render_widget(input, input_area);
 
         // Table
-        let header = Row::new(vec!["ID", "Name", "Progress", "Estimated Time"]).style(
+        let header = Row::new(vec!["ID", "Name", "Progress", "Status"]).style(
             Style::default()
                 .fg(Color::LightMagenta)
                 .add_modifier(Modifier::BOLD),
@@ -364,11 +364,29 @@ impl App {
         let rows: Vec<Row> = table_data
             .iter()
             .map(|(id, data)| {
+                // Determine the style based on status
+                let status_style = match data.status.as_str() {
+                    "Downloading" => Style::default()
+                        .fg(Color::LightBlue)
+                        .add_modifier(Modifier::BOLD),
+                    "Completed" => Style::default()
+                        .fg(Color::LightGreen)
+                        .add_modifier(Modifier::BOLD),
+                    "Paused" => Style::default()
+                        .fg(Color::LightYellow)
+                        .add_modifier(Modifier::BOLD),
+                    "Failed" => Style::default()
+                        .fg(Color::LightRed)
+                        .add_modifier(Modifier::BOLD),
+                    _ => Style::default(),
+                };
+
+                // Create cells with proper styling
                 Row::new(vec![
-                    id.to_string(),
-                    data.name.to_string(),
-                    data.progress.to_string(),
-                    data.status.to_string(),
+                    Cell::from(id.to_string()),
+                    Cell::from(data.name.to_string()),
+                    Cell::from(data.progress.to_string()),
+                    Cell::from(Span::styled(data.status.to_string(), status_style)),
                 ])
             })
             .collect();
@@ -405,7 +423,7 @@ impl App {
                     .bg(Color::Yellow)
                     .add_modifier(Modifier::BOLD | Modifier::ITALIC)
             } else {
-                Style::default().fg(Color::White).bg(Color::DarkGray)
+                Style::default().fg(Color::White)
             };
             return Span::styled(tab.to_string(), style);
         });
@@ -442,7 +460,7 @@ impl App {
 
         Paragraph::new(input_value).style(Style::default()).block(
             Block::bordered()
-                .border_style(Style::new().fg(Color::Yellow))
+                .border_style(Style::new())
                 .title(Span::styled(
                     self.selected_tab.to_string(),
                     Style::default().fg(Color::LightBlue).bold(),

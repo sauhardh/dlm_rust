@@ -151,5 +151,6 @@ async fn main() {
 
     if let Err(e) = start_socket().await {
         eprintln!("Error occured\n {:#?}", e);
+        std::process::exit(1);
     };
 }
