@@ -59,7 +59,7 @@ pub enum CommandTab {
     Download,
     Pause,
     Resume,
-    List,
+    Cancel,
 }
 
 impl CommandTab {
@@ -368,7 +368,7 @@ impl App {
                     "Paused" => Style::default()
                         .fg(Color::LightYellow)
                         .add_modifier(Modifier::BOLD),
-                    "Failed" => Style::default()
+                    "Canceled" => Style::default()
                         .fg(Color::LightRed)
                         .add_modifier(Modifier::BOLD),
                     _ => Style::default(),
@@ -443,7 +443,7 @@ impl App {
         let input_value = if self.input.input_value.is_empty() {
             match self.selected_tab {
                 CommandTab::Download => "URL",
-                CommandTab::List => "No Input Needed",
+                CommandTab::Cancel => "ID",
                 CommandTab::Pause => "ID",
                 CommandTab::Resume => "ID",
             }

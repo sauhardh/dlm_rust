@@ -1,4 +1,4 @@
-use futures::StreamExt;
+use futures::{lock, StreamExt};
 use reqwest::Client;
 use serde::Serialize;
 use tokio::fs::OpenOptions;
@@ -109,7 +109,9 @@ impl DownloadManager {
     pub async fn pause_downloading(&self, id: usize) {
         for info in &self.infos {
             let mut locked_info = info.1.lock().await;
-            if locked_info.id == id {
+            // If input ID matches the downloading data's ID and State is downloading
+            // We can pause the downloading.
+            if locked_info.id == id && locked_info.state == State::Downloading {
                 locked_info.state = State::Paused;
                 self.send_back_progress(locked_info).await;
                 break;
@@ -120,6 +122,8 @@ impl DownloadManager {
     pub async fn resume_download(&self, id: usize) {
         for info in &self.infos {
             let mut locked_info = info.1.lock().await;
+            // If input ID matches the downloading data's id. And If it is paused
+            // We can Resume the download.
             if locked_info.id == id && locked_info.state == State::Paused {
                 locked_info.state = State::Downloading;
                 locked_info.notify.notify_one();
@@ -219,10 +223,12 @@ impl DownloadManager {
             self.send_back_progress(info).await;
         }
 
-        // After completion of downloading.
         let mut info = single_info.lock().await;
-        info.state = State::Completed;
-        self.send_back_progress(info).await;
+        if info.state != State::Canceled {
+            // After completion of downloading.
+            info.state = State::Completed;
+            self.send_back_progress(info).await;
+        }
 
         file.flush().await?;
 
