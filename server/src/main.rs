@@ -37,110 +37,103 @@ fn create_req() -> PathBuf {
     socket_path
 }
 
-async fn start_socket() -> Result<(), Box<dyn std::error::Error>> {
-    let socket_path = create_req();
-    let listener = UnixListener::bind(socket_path).expect("Failed to bind to the UDS LISTENER");
-    let download_manager: Arc<Mutex<Option<DownloadManager>>> = Arc::new(Mutex::new(None));
-    loop {
-        match listener.accept().await {
-            Ok((mut stream, _)) => {
-                let mut reader = tokio::io::BufReader::new(&mut stream);
-                let mut input = String::new();
+#[derive(Clone)]
+struct SharedState {
+    download_manager: Arc<Mutex<DownloadManager>>,
+}
 
-                if reader.read_line(&mut input).await.is_err() {
-                    println!("Failed to read command");
-                    continue;
-                }
+impl SharedState {
+    pub fn new() -> Self {
+        Self {
+            download_manager: Arc::new(Mutex::new(DownloadManager::new())),
+        }
+    }
 
-                let commands: CommandsValue = match serde_json::from_str(&input) {
-                    Ok(cmd) => cmd,
-                    Err(err) => {
-                        eprintln!("Invalid JSON command: {err}");
-                        continue;
-                    }
-                };
-                println!("command is : {:#?}", commands);
+    pub async fn handle_connection(self, stream: tokio::net::UnixStream) {
+        let (mut reader_half, writer_half) = stream.into_split();
+        let mut reader = tokio::io::BufReader::new(&mut reader_half);
+        let mut input = String::new();
 
-                if let Some(urls) = commands.urls {
-                    let dm = DownloadManager::new(urls);
-                    *download_manager.lock().await = Some(dm);
-                }
+        let writer = Arc::new(Mutex::new(writer_half));
 
+        while reader.read_line(&mut input).await.is_ok() {
+            if let Ok(commands) = serde_json::from_str::<CommandsValue>(&input) {
                 match commands.command.as_str() {
                     "Download" => {
-                        let dm = Arc::clone(&download_manager);
+                        let dm = Arc::clone(&self.download_manager);
+                        if let Some(urls) = commands.urls {
+                            let mut dm_lock = dm.lock().await;
+
+                            let dm = &mut *dm_lock;
+                            dm.add_urls(urls);
+                        }
+
                         tokio::spawn(async move {
                             let dm = dm.lock().await.clone();
-                            if let Some(dm) = dm {
-                                let mut rx = dm.rx.lock().await;
-                                while let Some(progress) = rx.recv().await {
-                                    println!(
-                                        "Received Progress: {:#?} and id: {:#?}",
-                                        progress.progress, progress.id
-                                    );
-
-                                    let mut data = Vec::new();
-                                    data.push(progress);
-                                    let json_download = serde_json::to_string(&data).unwrap();
-
-                                    stream.write_all(json_download.as_bytes()).await.unwrap();
-                                    stream.write_all(b"\n").await.unwrap();
-                                }
-                            }
+                            dm.download().await;
                         });
 
-                        let dm = Arc::clone(&download_manager);
+                        let dm = Arc::clone(&self.download_manager);
+                        let download_writer = Arc::clone(&writer);
+
+                        // To send the progress back to the client
                         tokio::spawn(async move {
                             let dm = dm.lock().await.clone();
-                            if let Some(dm) = dm {
-                                dm.download().await;
+                            let mut rx = dm.rx.lock().await;
+                            while let Some(progress) = rx.recv().await {
+                                let mut data = vec![progress];
+                                let json_download = serde_json::to_string(&data).unwrap();
+
+                                download_writer
+                                    .lock()
+                                    .await
+                                    .write_all(json_download.as_bytes())
+                                    .await
+                                    .unwrap();
+
+                                download_writer.lock().await.write_all(b"\n").await.unwrap();
+                                data.clear();
                             }
                         });
                     }
 
                     "Pause" => {
-                        let dm = download_manager.lock().await.clone();
-                        if let Some(dm) = dm {
-                            dm.pause_downloading(commands.id.unwrap()).await;
-                        }
+                        let dm = self.download_manager.lock().await.clone();
+                        dm.pause_downloading(commands.id.unwrap()).await;
                     }
 
                     "Resume" => {
-                        let dm = download_manager.lock().await.clone();
-                        if let Some(dm) = dm {
-                            dm.resume_download(commands.id.unwrap()).await;
-                        }
+                        let dm = self.download_manager.lock().await.clone();
+                        dm.resume_download(commands.id.unwrap()).await;
                     }
 
                     "Cancel" => {
-                        let dm = download_manager.lock().await.clone();
-                        if let Some(dm) = dm {
-                            dm.cancel_downloading(commands.id.unwrap()).await;
-                        }
+                        let dm = self.download_manager.lock().await.clone();
+                        dm.cancel_downloading(commands.id.unwrap()).await;
                     }
                     "List" => {
-                        let dm = download_manager.clone().lock().await.clone();
-                        tokio::spawn(async move {
-                            // let dm = download_manager.lock().await.clone();
-                            if let Some(dm) = dm {
-                                let data = dm.list_downloads().await;
-                                let json_data = serde_json::to_string(&data).unwrap();
-                                println!("Json _ data is : {json_data:#?}");
+                        let dm = self.download_manager.clone().lock().await.clone();
+                        let list_writer = Arc::clone(&writer);
 
-                                let _ = stream.write_all(json_data.as_bytes()).await;
-                                let _ = stream.write_all(b"\n").await;
-                            }
+                        //List all the downloads
+                        tokio::spawn(async move {
+                            let data = dm.list_downloads().await;
+                            let json_data = serde_json::to_string(&data).unwrap();
+
+                            let _ = list_writer
+                                .lock()
+                                .await
+                                .write_all(json_data.as_bytes())
+                                .await;
+                            let _ = list_writer.lock().await.write_all(b"\n").await;
                         });
                     }
                     _ => {
-                        println!("UnMatched Command Passed!");
+                        println!("Unmatched Command Passed!");
                     }
                 }
             }
-
-            Err(e) => {
-                println!("Error is: {e:?}");
-            }
+            input.clear();
         }
     }
 }
@@ -149,8 +142,11 @@ async fn start_socket() -> Result<(), Box<dyn std::error::Error>> {
 async fn main() {
     console_subscriber::init();
 
-    if let Err(e) = start_socket().await {
-        eprintln!("Error occured\n {:#?}", e);
-        std::process::exit(1);
-    };
+    let state = SharedState::new();
+    let listener = UnixListener::bind(create_req()).expect("Failed to bind to the UDS LISTENER");
+
+    while let Ok((stream, _)) = listener.accept().await {
+        let state = state.clone();
+        state.handle_connection(stream).await;
+    }
 }

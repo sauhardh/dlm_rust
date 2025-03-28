@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::sync::Semaphore;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +19,7 @@ use crate::utils::validate_url;
 use crate::utils::DownloadError;
 
 #[derive(PartialEq, Clone, Debug, Serialize)]
-enum State {
+pub enum State {
     Downloading,
     Paused,
     Completed,
@@ -62,37 +63,50 @@ impl SingleDownload {
 #[derive(Clone, Debug)]
 pub struct DownloadManager {
     no_of_downloads: usize,
-    infos: Vec<Arc<Mutex<SingleDownload>>>,
+    infos: HashMap<usize, Arc<Mutex<SingleDownload>>>,
     pub rx: Arc<Mutex<UnboundedReceiver<SingleDownload>>>,
+    tx: UnboundedSender<SingleDownload>,
+    urls: Vec<String>,
 }
 
 impl DownloadManager {
-    pub fn new(urls: Vec<String>) -> Self {
+    pub fn new() -> Self {
         let (tx, rx) = unbounded_channel();
 
-        let mut infos = Vec::new();
+        DownloadManager {
+            no_of_downloads: 0,
+            infos: HashMap::new(),
+            rx: Arc::new(Mutex::new(rx)),
+            urls: Vec::new(),
+            tx,
+        }
+    }
+
+    pub fn add_urls(&mut self, urls: Vec<String>) {
         for (id, url) in urls.iter().enumerate() {
             if let Err(e) = validate_url(&url) {
                 eprintln!("Failed to validate the url:{url}.\nMore: {e:#?}");
                 continue;
             }
-            infos.push(Arc::new(Mutex::new(SingleDownload::new(
-                url,
-                id,
-                tx.clone(),
-            ))));
-        }
 
-        DownloadManager {
-            no_of_downloads: infos.len(),
-            infos,
-            rx: Arc::new(Mutex::new(rx)),
+            if self.urls.contains(url) {
+                println!("URL already downloading.");
+                continue;
+            }
+
+            self.urls.push(url.to_string());
+            self.no_of_downloads = self.urls.len();
+
+            self.infos.insert(
+                id,
+                Arc::new(Mutex::new(SingleDownload::new(url, id, self.tx.clone()))),
+            );
         }
     }
 
     pub async fn pause_downloading(&self, id: usize) {
         for info in &self.infos {
-            let mut locked_info = info.lock().await;
+            let mut locked_info = info.1.lock().await;
             if locked_info.id == id {
                 locked_info.state = State::Paused;
                 break;
@@ -102,7 +116,7 @@ impl DownloadManager {
 
     pub async fn resume_download(&self, id: usize) {
         for info in &self.infos {
-            let mut locked_info = info.lock().await;
+            let mut locked_info = info.1.lock().await;
             if locked_info.id == id && locked_info.state == State::Paused {
                 locked_info.state = State::Downloading;
                 locked_info.notify.notify_one();
@@ -113,7 +127,7 @@ impl DownloadManager {
 
     pub async fn cancel_downloading(&self, id: usize) {
         for info in &self.infos {
-            let mut locked_info = info.lock().await;
+            let mut locked_info = info.1.lock().await;
             if locked_info.id == id {
                 locked_info.state = State::Canceled;
                 break;
@@ -124,11 +138,10 @@ impl DownloadManager {
     pub async fn list_downloads(self) -> Vec<SingleDownload> {
         let mut vec = Vec::new();
         for info in &self.infos {
-            let locked_info = info.lock().await;
+            let locked_info = info.1.lock().await;
             vec.push(locked_info.clone());
         }
 
-        println!("Got vec: {vec:#?}");
         vec
     }
 
@@ -163,7 +176,7 @@ impl DownloadManager {
             let notify = {
                 let info = single_info.lock().await;
                 if info.state == State::Paused {
-                    println!("Downloading paused");
+                    println!("\n\nDownloading paused\n\n");
                     Some(info.notify.clone())
                 } else {
                     None
@@ -185,8 +198,6 @@ impl DownloadManager {
             let chunk = chunk?;
             file.write_all(&chunk).await?;
             downloaded += chunk.len();
-
-            println!("Written : {downloaded:?}");
 
             let mut info = single_info.lock().await;
             info.progress = downloaded;
@@ -237,12 +248,12 @@ impl DownloadManager {
     /// Public Download Function
     ///
     /// async download the data from list of urls
-    pub async fn download(self) {
+    pub async fn download(&self) {
         let semaphore = Arc::new(Semaphore::new(10));
 
         let mut tasks = Vec::new();
         for single_info in &self.infos {
-            let single_info = Arc::clone(single_info);
+            let single_info = Arc::clone(single_info.1);
             let permit = semaphore.clone().acquire_owned().await.unwrap();
 
             let this = self.clone();
@@ -252,7 +263,6 @@ impl DownloadManager {
                     eprintln!("Failed to download the request.\nMore: {err:#?}");
                 }
 
-                println!("drop");
                 drop(permit);
             }));
         }

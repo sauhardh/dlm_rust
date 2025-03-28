@@ -217,14 +217,6 @@ impl HandleInput {
     }
 }
 
-enum TheEvent {
-    Input(event::KeyEvent),
-    Tick,
-    Resize,
-    DownloadUpdate(SingleDownload),
-    DownloadDone,
-}
-
 #[derive(Clone)]
 struct App {
     input: HandleInput,

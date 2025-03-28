@@ -41,12 +41,16 @@ pub async fn send_command(
     mut write_half: tokio::net::unix::OwnedWriteHalf,
     mut commands_rx: UnboundedReceiver<CommandArgument>,
 ) -> Result<(), Box<dyn Error>> {
+    let mut buffer = Vec::new();
+
     while let Some(command) = commands_rx.recv().await {
-        if let Ok(command_str) = serde_json::to_string(&command) {
-            write_half.write_all(command_str.as_bytes()).await?;
-            write_half.write_all(b"\n").await?;
-            write_half.flush().await?;
-        }
+        serde_json::to_writer(&mut buffer, &command)?;
+        buffer.push(b'\n');
+        if let Err(e) = write_half.write_all(&buffer).await {
+            println!("Error is : {e:?}");
+        };
+        write_half.flush().await?;
+        buffer.clear();
     }
 
     Ok(())
