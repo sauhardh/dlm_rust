@@ -1,4 +1,5 @@
-use url::{self, Url};
+use url;
+use url::Url;
 
 /// Validate the url before processing.
 pub fn validate_url(url: &str) -> Result<(), Box<dyn std::error::Error>> {

@@ -3,23 +3,28 @@ use color_eyre;
 use color_eyre::eyre::Ok;
 use ratatui::crossterm::event::{self, KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Styled, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, Tabs};
 use ratatui::{DefaultTerminal, Frame};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use strum;
 use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
 
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::{CommandArgument, SingleDownload};
+use crate::CommandArgument;
+use crate::SingleDownload;
 
 #[derive(Default, Debug, Clone)]
 struct DownloadingTable {
@@ -28,15 +33,23 @@ struct DownloadingTable {
     name: String,
     progress: usize,
     status: String,
+    total_length: usize,
 }
 
 impl DownloadingTable {
-    pub fn build(id: u64, name: String, progress: usize, status: String) -> Self {
+    pub fn build(
+        id: u64,
+        name: String,
+        progress: usize,
+        status: String,
+        total_length: usize,
+    ) -> Self {
         Self {
             id,
             name,
             progress,
             status,
+            total_length,
         }
     }
 }
@@ -223,6 +236,7 @@ struct App {
     input: HandleInput,
     selected_tab: CommandTab,
     table_data: Arc<RwLock<HashMap<u64, DownloadingTable>>>,
+    begin_time: Instant,
 }
 
 impl App {
@@ -231,6 +245,7 @@ impl App {
             input: HandleInput::new(),
             selected_tab: CommandTab::Download,
             table_data: Arc::new(RwLock::new(HashMap::new())),
+            begin_time: Instant::now(),
         }
     }
 
@@ -270,6 +285,7 @@ impl App {
                             id,
                         };
 
+                        // Send the Input Commands to the Server for download
                         if let Err(e) = command_tx.send(command) {
                             eprintln!("Failed to send error command: {e}");
                         };
@@ -294,6 +310,7 @@ impl App {
                             progress.url,
                             progress.progress,
                             progress.state,
+                            progress.total_length,
                         ),
                     );
                 }
@@ -302,6 +319,17 @@ impl App {
     }
 
     pub fn draw(&mut self, frame: &mut Frame<'_>) {
+        let size = frame.area();
+
+        // If terminal is to small
+        if size.width < 50 || size.height < 12 {
+            let warning = Paragraph::new("Terminal too small - please resize")
+                .block(Block::default().borders(Borders::ALL))
+                .style(Style::default().fg(Color::Red).bold());
+            frame.render_widget(warning, frame.area());
+            return;
+        }
+
         let vertical = Layout::vertical([
             Constraint::Length(3),
             Constraint::Length(1),
@@ -378,7 +406,7 @@ impl App {
                 Row::new(vec![
                     Cell::from(id.to_string()),
                     Cell::from(data.name.to_string()),
-                    Cell::from(data.progress.to_string()),
+                    Cell::from(self.progress_bar(data.progress, data.total_length)),
                     Cell::from(Span::styled(data.status.to_string(), status_style)),
                 ])
             })
@@ -407,8 +435,35 @@ impl App {
     }
 
     #[inline]
+    fn progress_bar(&self, progress: usize, total_length: usize) -> Line<'_> {
+        if total_length != 0 {
+            let percent = (progress as f64 / 100.0) as f64;
+            let filled = (percent * 20.0).round() as usize;
+
+            Line::from(vec![
+                Span::raw("["),
+                Span::styled("█".repeat(filled), Style::default().fg(Color::Magenta)),
+                Span::raw(" ".repeat(20 - filled)),
+                Span::raw("]"),
+                Span::raw(format!("{:>3.0}%", percent * 100.0)),
+            ])
+        } else {
+            let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let frame_idx =
+                (self.begin_time.elapsed().as_millis() / 100) % spinner_frames.len() as u128;
+
+            Line::from(vec![
+                Span::raw(spinner_frames[frame_idx as usize]),
+                Span::raw(" "),
+                Span::raw(format!("{:.1}", progress as f64)),
+                Span::raw(" "),
+            ])
+        }
+    }
+
+    #[inline]
     fn add_tabs(&self) -> Tabs<'static> {
-        // // Tab Mode
+        // Tab Mode
         let tab_titles = CommandTab::iter().map(|tab| {
             let style = if tab == self.selected_tab {
                 Style::default()
@@ -421,10 +476,6 @@ impl App {
             return Span::styled(tab.to_string(), style);
         });
         Tabs::new(tab_titles)
-            .block(Block::default().title(Span::styled(
-                " Modes ",
-                Style::default().fg(Color::LightBlue).bold(),
-            )))
             .padding("  ", "  ")
             .select(self.selected_tab as usize)
     }
@@ -435,6 +486,7 @@ impl App {
         let text = Text::from(Line::from(msg))
             .patch_style(style_one)
             .fg(Color::Yellow);
+
         Paragraph::new(text)
     }
 
@@ -442,10 +494,8 @@ impl App {
     fn input_paragraph(&self) -> Paragraph {
         let input_value = if self.input.input_value.is_empty() {
             match self.selected_tab {
-                CommandTab::Download => "URL",
-                CommandTab::Cancel => "ID",
-                CommandTab::Pause => "ID",
-                CommandTab::Resume => "ID",
+                CommandTab::Download => "➤ Enter URL ",
+                _ => "➤ Enter ID ",
             }
         } else {
             self.input.input_value.as_str()
@@ -457,7 +507,8 @@ impl App {
                 .title(Span::styled(
                     self.selected_tab.to_string(),
                     Style::default().fg(Color::LightBlue).bold(),
-                )),
+                ))
+                .border_type(BorderType::Rounded),
         )
     }
 }

@@ -22,14 +22,14 @@ Built with `ratatui` for the terminal interface and `tokio-console` for async ta
 - 🔍 Async task debugging with `tokio-console`  
 - ⚡ Concurrent multi-link downloads  
 - ⏸️ Pause/Resume functionality  
-- 📋 Download listing  
+- 📋 Download listing 
+- ⏲ Retry upto 2 times if downloading fails.
 
 ---
 
 ## 🚧 TODO
 
 - [ ] Windows support via `named_pipe`  
-- [ ] Implement "List downloads" feature  
 
 ---
 

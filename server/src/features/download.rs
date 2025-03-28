@@ -1,9 +1,12 @@
-use futures::{lock, StreamExt};
+use futures::StreamExt;
 use reqwest::Client;
 use serde::Serialize;
 use tokio::fs::OpenOptions;
-use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufWriter;
+use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::sync::Semaphore;
@@ -217,9 +220,14 @@ impl DownloadManager {
             file.write_all(&chunk).await?;
             downloaded += chunk.len();
 
-            // To Send the Progress.
+            // To Send the realtime progress.
             let mut info = single_info.lock().await;
-            info.progress = downloaded;
+            // Calculating the percentage of the progress
+            info.progress = if info.total_length != 0 {
+                (downloaded * 100) / info.total_length
+            } else {
+                0
+            };
             self.send_back_progress(info).await;
         }
 
