@@ -83,7 +83,8 @@ impl DownloadManager {
     }
 
     pub fn add_urls(&mut self, urls: Vec<String>) {
-        for (id, url) in urls.iter().enumerate() {
+        let base_id = self.no_of_downloads;
+        for (_, url) in urls.iter().enumerate() {
             if let Err(e) = validate_url(&url) {
                 eprintln!("Failed to validate the url:{url}.\nMore: {e:#?}");
                 continue;
@@ -95,13 +96,14 @@ impl DownloadManager {
             }
 
             self.urls.push(url.to_string());
-            self.no_of_downloads = self.urls.len();
+            let id = base_id + 1;
 
             self.infos.insert(
                 id,
                 Arc::new(Mutex::new(SingleDownload::new(url, id, self.tx.clone()))),
             );
         }
+        self.no_of_downloads = self.urls.len();
     }
 
     pub async fn pause_downloading(&self, id: usize) {
@@ -109,6 +111,7 @@ impl DownloadManager {
             let mut locked_info = info.1.lock().await;
             if locked_info.id == id {
                 locked_info.state = State::Paused;
+                self.send_back_progress(locked_info).await;
                 break;
             }
         }
@@ -130,6 +133,7 @@ impl DownloadManager {
             let mut locked_info = info.1.lock().await;
             if locked_info.id == id {
                 locked_info.state = State::Canceled;
+                self.send_back_progress(locked_info).await;
                 break;
             }
         }
@@ -143,6 +147,16 @@ impl DownloadManager {
         }
 
         vec
+    }
+
+    /// This send the current progress info i.e. [SingleDownload] to the client
+    ///
+    /// info that is locked and passed to the function is droped.
+    async fn send_back_progress(&self, info: tokio::sync::MutexGuard<'_, SingleDownload>) {
+        if let Err(e) = info.tx.send(info.clone()) {
+            eprintln!("Failed to pass the message through channel. \n Info: {e}");
+        }
+        drop(info);
     }
 
     #[inline]
@@ -176,7 +190,7 @@ impl DownloadManager {
             let notify = {
                 let info = single_info.lock().await;
                 if info.state == State::Paused {
-                    println!("\n\nDownloading paused\n\n");
+                    println!("Downloading paused; {:?}", info.id);
                     Some(info.notify.clone())
                 } else {
                     None
@@ -199,20 +213,16 @@ impl DownloadManager {
             file.write_all(&chunk).await?;
             downloaded += chunk.len();
 
+            // To Send the Progress.
             let mut info = single_info.lock().await;
             info.progress = downloaded;
-
-            if let Err(e) = info.tx.send(info.clone()) {
-                eprintln!("Failed to pass the message through channel. \n Info: {e}");
-            }
+            self.send_back_progress(info).await;
         }
 
+        // After completion of downloading.
         let mut info = single_info.lock().await;
         info.state = State::Completed;
-        if let Err(e) = info.tx.send(info.clone()) {
-            eprintln!("Failed to pass the Failed message through channel. \n Info: {e}");
-        }
-        drop(info);
+        self.send_back_progress(info).await;
 
         file.flush().await?;
 

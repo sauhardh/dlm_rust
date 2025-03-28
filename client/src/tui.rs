@@ -23,6 +23,7 @@ use crate::{CommandArgument, SingleDownload};
 
 #[derive(Default, Debug, Clone)]
 struct DownloadingTable {
+    #[allow(dead_code)]
     id: u64,
     name: String,
     progress: usize,
