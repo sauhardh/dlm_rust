@@ -1,72 +1,59 @@
-
-# DLM
-
-⚠️ work in progress
-
- A TUI based asynchronous Download Manager that levarages the power of IPC.
- Uses `ratatui` for tui, `tokio-console` to console the async task.
-
-  
-
-###  NOTE:
-
-> Currently It only supports for `UNIX` system because of the `Unix Domain Socket` IPC, which is used. For windows, `named_pipe` could be the choice to use. (Work In Progress).
-
-> `server` directory contains main downloading, pausing , resuming logic code.
- pausing, resuming can be done only while downloading, by using thread lock.
-
-> `client` directory contains the TUI logic.
-  
-  
-
-## Features
-
-- User intutive Terminal User Interface
-- Able to download multiple links concurrently.
-- Able to Pause, Resume, List the download.
+#  dlm_rust (Download Manager) 
 
 
-## TODO:
+A TUI-based asynchronous Download Manager that leverages the power of IPC.  
+Built with `ratatui` for the terminal interface and `tokio-console` for async task monitoring.
 
-[] Make it work on windows through `named_pipe` (That's the current approach)
-[] Implement List download or some other alternatives for it.
+---
 
-## Run
+## 📝 NOTE
 
-```
-git clone <Link of this repo>
-```
-```
+> Currently only supports **UNIX** systems due to the use of `Unix Domain Socket` for IPC.  
+> Windows support via `named_pipe` is planned. *(Work In Progress)*
+
+- **`server` directory**: Contains core downloading logic (pausing/resuming via thread locking).  
+- **`client` directory**: Handles the TUI interface.
+
+---
+
+## ✨ Features
+
+- 🖥️ Intuitive Terminal User Interface (`ratatui`)  
+- 🔍 Async task debugging with `tokio-console`  
+- ⚡ Concurrent multi-link downloads  
+- ⏸️ Pause/Resume functionality  
+- 📋 Download listing  
+
+---
+
+## 🚧 TODO
+
+- [ ] Windows support via `named_pipe`  
+- [ ] Implement "List downloads" feature  
+
+---
+
+## 🛠️ Run
+
+### Clone & Navigate
+```bash
+git clone <repo-link>
 cd dlm_rust
 ```
+### Mannual Execution
 
-**Mannual Running**
-
-*It runs the server*
-```
+**1) Run server first**
+```bash
 cargo run
 ```
-<br>
 
-*To run the TUI*
-```
+**2) Run client(tui)**
+
+```bash
 cd client
 ```
-```
+
+```bash
 cargo run
-```
-
-<br>
-
-**or, Use bash**
-
-you may need to, 
-
-```
-chmod +x run.sh
-```
-
-```
-./run.sh
 ```
 
