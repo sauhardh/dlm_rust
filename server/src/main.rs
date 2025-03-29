@@ -7,6 +7,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 use tracing::{error, warn};
+use tracing_subscriber;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use std::fs;
 use std::path::Path;
@@ -149,7 +151,12 @@ impl SharedState {
 
 #[tokio::main]
 async fn main() {
-    console_subscriber::init();
+    // console_subscriber::init();
+
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
 
     let state = SharedState::new();
     let listener = UnixListener::bind(create_req()).expect("Failed to bind to the UDS LISTENER");
