@@ -3,7 +3,7 @@ use color_eyre;
 use color_eyre::eyre::Ok;
 use ratatui::crossterm::event::{self, KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
-use ratatui::style::{Color, Modifier, Style, Styled, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, Tabs};
 use ratatui::{DefaultTerminal, Frame};
@@ -16,8 +16,6 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
 use std::collections::HashMap;
-use std::fs;
-use std::io::Write;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -207,7 +205,15 @@ impl HandleInput {
                 .collect();
             self.messages = Some(data);
         } else {
-            self.id = Some(self.input_value.trim().parse().unwrap())
+            if !self.input_value.is_empty() {
+                let parsed_value = self.input_value.trim().parse::<usize>();
+
+                if let Err(e) = parsed_value {
+                    eprintln!("Failed to parse the value:{e}");
+                } else {
+                    self.id = Some(parsed_value.unwrap())
+                }
+            }
         }
 
         self.input_value.clear();
@@ -277,6 +283,7 @@ impl App {
                     (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
                         self.selected_tab = self.selected_tab.previous()
                     }
+
                     (KeyCode::Enter, _) => {
                         let (message, id) = self.input.submit_message(self.selected_tab);
                         let command = CommandArgument {
@@ -377,7 +384,7 @@ impl App {
         // Table
         let header = Row::new(vec!["ID", "Name", "Progress", "Status"]).style(
             Style::default()
-                .fg(Color::LightMagenta)
+                .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -406,7 +413,16 @@ impl App {
                 Row::new(vec![
                     Cell::from(id.to_string()),
                     Cell::from(data.name.to_string()),
-                    Cell::from(self.progress_bar(data.progress, data.total_length)),
+                    Cell::from(if data.status == "Completed" && data.total_length == 0 {
+                        Line::from(vec![
+                            Span::raw("["),
+                            Span::styled("█".repeat(20), Style::default().fg(Color::Magenta)),
+                            Span::raw("]"),
+                            Span::raw(format!("100%")),
+                        ])
+                    } else {
+                        self.progress_bar(data.progress, data.total_length)
+                    }),
                     Cell::from(Span::styled(data.status.to_string(), status_style)),
                 ])
             })
@@ -437,25 +453,24 @@ impl App {
     #[inline]
     fn progress_bar(&self, progress: usize, total_length: usize) -> Line<'_> {
         if total_length != 0 {
-            let percent = (progress as f64 / 100.0) as f64;
-            let filled = (percent * 20.0).round() as usize;
+            let filled = (progress as f64 / 5.0).round() as usize;
 
             Line::from(vec![
                 Span::raw("["),
                 Span::styled("█".repeat(filled), Style::default().fg(Color::Magenta)),
                 Span::raw(" ".repeat(20 - filled)),
                 Span::raw("]"),
-                Span::raw(format!("{:>3.0}%", percent * 100.0)),
+                Span::raw(format!("{:>3.0}%", progress)),
             ])
         } else {
-            let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let frame_idx =
-                (self.begin_time.elapsed().as_millis() / 100) % spinner_frames.len() as u128;
-
+            static SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             Line::from(vec![
-                Span::raw(spinner_frames[frame_idx as usize]),
+                Span::raw(
+                    SPINNER_FRAMES[(self.begin_time.elapsed().as_millis() / 100) as usize
+                        % SPINNER_FRAMES.len()],
+                ),
                 Span::raw(" "),
-                Span::raw(format!("{:.1}", progress as f64)),
+                Span::raw(format!("{}", progress)),
                 Span::raw(" "),
             ])
         }
@@ -467,7 +482,7 @@ impl App {
         let tab_titles = CommandTab::iter().map(|tab| {
             let style = if tab == self.selected_tab {
                 Style::default()
-                    .fg(Color::Magenta)
+                    .fg(Color::LightBlue)
                     .bg(Color::Yellow)
                     .add_modifier(Modifier::BOLD | Modifier::ITALIC)
             } else {
@@ -485,7 +500,7 @@ impl App {
         let style_one = Style::default().add_modifier(Modifier::RAPID_BLINK);
         let text = Text::from(Line::from(msg))
             .patch_style(style_one)
-            .fg(Color::Yellow);
+            .fg(Color::Gray);
 
         Paragraph::new(text)
     }

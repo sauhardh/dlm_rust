@@ -85,12 +85,14 @@ impl SharedState {
                                 let mut data = vec![progress];
                                 let json_download = serde_json::to_string(&data).unwrap();
 
-                                download_writer
+                                if let Err(e) = download_writer
                                     .lock()
                                     .await
                                     .write_all(json_download.as_bytes())
                                     .await
-                                    .unwrap();
+                                {
+                                    eprintln!("Error occured on sending download info: {e:#?}");
+                                };
 
                                 download_writer.lock().await.write_all(b"\n").await.unwrap();
                                 data.clear();

@@ -48,9 +48,8 @@ pub async fn send_command(
     while let Some(command) = commands_rx.recv().await {
         serde_json::to_writer(&mut buffer, &command)?;
         buffer.push(b'\n');
-        if let Err(e) = write_half.write_all(&buffer).await {
-            println!("Error is : {e:?}");
-        };
+        write_half.write_all(&buffer).await?;
+
         write_half.flush().await?;
         buffer.clear();
     }
@@ -75,6 +74,7 @@ pub async fn receive_progress(
                 for each in data {
                     if let Err(e) = realtime_tx.send(each) {
                         eprintln!("Error occurent while sending progress through the channel:{e}");
+                        break;
                     }
                 }
             }
@@ -82,7 +82,6 @@ pub async fn receive_progress(
                 eprintln!("Deserialization Error: {e:#?}");
             }
         }
-
         line.clear();
     }
 
@@ -94,6 +93,7 @@ async fn main() {
     match connect_socket().await {
         Ok(stream) => {
             let (read_half, write_half) = stream.into_split();
+
             let (realtime_tx, realtime_rx) = mpsc::unbounded_channel::<SingleDownload>();
             let (command_tx, command_rx) = mpsc::unbounded_channel::<CommandArgument>();
 
