@@ -14,6 +14,7 @@ use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::error;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -209,7 +210,7 @@ impl HandleInput {
                 let parsed_value = self.input_value.trim().parse::<usize>();
 
                 if let Err(e) = parsed_value {
-                    eprintln!("Failed to parse the value:{e}");
+                    error!("Failed to parse the value:{e}");
                 } else {
                     self.id = Some(parsed_value.unwrap())
                 }
@@ -257,7 +258,7 @@ impl App {
 
     pub fn draw_tui(&mut self, terminal: &mut DefaultTerminal) {
         if let Err(e) = terminal.draw(|frame| self.draw(frame)) {
-            eprintln!("The error e is :{e:#?}");
+            error!("The error e is :{e:#?}");
         };
     }
 
@@ -294,7 +295,7 @@ impl App {
 
                         // Send the Input Commands to the Server for download
                         if let Err(e) = command_tx.send(command) {
-                            eprintln!("Failed to send error command: {e}");
+                            error!("Failed to send error command: {e}");
                         };
                     }
                     (KeyCode::Char(to_insert), _) => {
@@ -453,8 +454,8 @@ impl App {
     #[inline]
     fn progress_bar(&self, progress: usize, total_length: usize) -> Line<'_> {
         if total_length != 0 {
-            let filled = (progress as f64 / 5.0).round() as usize;
-
+            let percent = (progress as f64 / 100.0) as f64;
+            let filled = (percent * 20.0).round() as usize;
             Line::from(vec![
                 Span::raw("["),
                 Span::styled("█".repeat(filled), Style::default().fg(Color::Magenta)),

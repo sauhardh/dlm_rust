@@ -6,6 +6,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
+use tracing::{error, warn};
 
 use std::fs;
 use std::path::Path;
@@ -84,6 +85,7 @@ impl SharedState {
                             while let Some(progress) = rx.recv().await {
                                 let mut data = vec![progress];
                                 let json_download = serde_json::to_string(&data).unwrap();
+                                data.clear();
 
                                 if let Err(e) = download_writer
                                     .lock()
@@ -91,11 +93,15 @@ impl SharedState {
                                     .write_all(json_download.as_bytes())
                                     .await
                                 {
-                                    eprintln!("Error occured on sending download info: {e:#?}");
+                                    error!("Error occured on sending download info: {e:#?}");
+                                    break;
                                 };
 
-                                download_writer.lock().await.write_all(b"\n").await.unwrap();
-                                data.clear();
+                                if let Err(e) = download_writer.lock().await.write_all(b"\n").await
+                                {
+                                    error!("Error occured on sending end line for download info: {e:#?}");
+                                    break;
+                                };
                             }
                         });
                     }
@@ -132,7 +138,7 @@ impl SharedState {
                         });
                     }
                     _ => {
-                        println!("Unmatched Command Passed!");
+                        warn!("Unmatched Command Passed!");
                     }
                 }
             }

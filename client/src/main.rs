@@ -7,6 +7,7 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::error;
 use tui::CommandTab;
 
 use std::error::Error;
@@ -73,13 +74,13 @@ pub async fn receive_progress(
             Ok(data) => {
                 for each in data {
                     if let Err(e) = realtime_tx.send(each) {
-                        eprintln!("Error occurent while sending progress through the channel:{e}");
+                        error!("Error occurent while sending progress through the channel:{e}");
                         break;
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Deserialization Error: {e:#?}");
+                error!("Deserialization Error: {e:#?}");
             }
         }
         line.clear();
@@ -99,20 +100,20 @@ async fn main() {
 
             tokio::spawn(async move {
                 if let Err(e) = receive_progress(read_half, realtime_tx).await {
-                    eprintln!("Failed to receive progress: {e}");
+                    error!("Failed to receive progress: {e}");
                 };
             });
 
             tokio::spawn(async move {
                 if let Err(e) = send_command(write_half, command_rx).await {
-                    eprintln!("Failed to send command: {e}");
+                    error!("Failed to send command: {e}");
                 }
             });
 
             if let Err(e) = tui::run_tui(command_tx, realtime_rx).await {
-                println!("Failed to run TUI: {:#?}", e);
+                error!("Failed to run TUI: {:#?}", e);
             }
         }
-        Err(e) => eprintln!("The error is occured while connecting : {e:#?}"),
+        Err(e) => error!("The error is occured while connecting : {e:#?}"),
     }
 }

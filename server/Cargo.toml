@@ -11,7 +11,9 @@ reqwest = { version = "0.12.14", features= ["stream"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tracing = { workspace = true }
 url = "2.5.4"
 console-subscriber = "0.2"
+
 
 

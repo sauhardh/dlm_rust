@@ -10,6 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::sync::Semaphore;
+use tracing::{error, info, warn};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -89,12 +90,12 @@ impl DownloadManager {
         let base_id = self.no_of_downloads;
         for (_, url) in urls.iter().enumerate() {
             if let Err(e) = validate_url(&url) {
-                eprintln!("Failed to validate the url:{url}.\nMore: {e:#?}");
+                error!("Failed to validate the url:{url}.\nMore: {e:#?}");
                 continue;
             }
 
             if self.urls.contains(url) {
-                println!("URL already downloading.");
+                warn!("URL is already downloading");
                 continue;
             }
 
@@ -161,7 +162,7 @@ impl DownloadManager {
     /// info that is locked and passed to the function is droped.
     async fn send_back_progress(&self, info: tokio::sync::MutexGuard<'_, SingleDownload>) {
         if let Err(e) = info.tx.send(info.clone()) {
-            eprintln!("Failed to pass the message through channel. \n Info: {e}");
+            error!("Failed to pass the message through channel. \n Info: {e}");
         }
         drop(info);
     }
@@ -197,7 +198,7 @@ impl DownloadManager {
             let notify = {
                 let info = single_info.lock().await;
                 if info.state == State::Paused {
-                    println!("Downloading paused; {:?}", info.id);
+                    info!("Downloading paused; {:?}", info.id);
                     Some(info.notify.clone())
                 } else {
                     None
@@ -258,7 +259,7 @@ impl DownloadManager {
             match self.single_download(Arc::clone(&single_info)).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
-                    eprintln!("\t__Try number: {retries}__\t");
+                    warn!("\t__Try number: {retries}__\t");
                     last_error = Some(e);
                     retries -= 1;
                     tokio::time::sleep(Duration::from_millis(40)).await;
@@ -284,7 +285,7 @@ impl DownloadManager {
 
             tasks.push(tokio::spawn(async move {
                 if let Err(err) = this.attempt_download(single_info).await {
-                    eprintln!("Failed to download the request.\nMore: {err:#?}");
+                    error!("Failed to download the request.\nMore: {err:#?}");
                 }
 
                 drop(permit);
