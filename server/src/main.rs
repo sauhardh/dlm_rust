@@ -67,7 +67,7 @@ impl SharedState {
                             let mut dm_lock = dm.lock().await;
 
                             let dm = &mut *dm_lock;
-                            dm.add_urls(urls);
+                            dm.add_urls(urls).await;
                         }
 
                         tokio::spawn(async move {

@@ -70,7 +70,7 @@ pub struct DownloadManager {
     infos: HashMap<usize, Arc<Mutex<SingleDownload>>>,
     pub rx: Arc<Mutex<UnboundedReceiver<SingleDownload>>>,
     tx: UnboundedSender<SingleDownload>,
-    urls: Vec<String>,
+    active_urls: Arc<Mutex<Vec<String>>>,
 }
 
 impl DownloadManager {
@@ -81,33 +81,32 @@ impl DownloadManager {
             no_of_downloads: 0,
             infos: HashMap::new(),
             rx: Arc::new(Mutex::new(rx)),
-            urls: Vec::new(),
+            active_urls: Arc::new(Mutex::new(Vec::new())),
             tx,
         }
     }
 
-    pub fn add_urls(&mut self, urls: Vec<String>) {
-        let base_id = self.no_of_downloads;
-        for (_, url) in urls.iter().enumerate() {
+    pub async fn add_urls(&mut self, urls: Vec<String>) {
+        for url in urls {
             if let Err(e) = validate_url(&url) {
                 error!("Failed to validate the url:{url}.\nMore: {e:#?}");
                 continue;
             }
 
-            if self.urls.contains(url) {
+            let active_urls = self.active_urls.lock().await;
+            if active_urls.contains(&url.trim().to_string()) {
                 warn!("URL is already downloading");
                 continue;
             }
+            self.no_of_downloads = active_urls.len();
 
-            self.urls.push(url.to_string());
-            let id = base_id + 1;
+            let id: usize = active_urls.len() + 1;
 
             self.infos.insert(
                 id,
-                Arc::new(Mutex::new(SingleDownload::new(url, id, self.tx.clone()))),
+                Arc::new(Mutex::new(SingleDownload::new(&url, id, self.tx.clone()))),
             );
         }
-        self.no_of_downloads = self.urls.len();
     }
 
     pub async fn pause_downloading(&self, id: usize) {
@@ -170,7 +169,7 @@ impl DownloadManager {
     #[inline]
     /// Make http request and download the data
     async fn single_download(
-        &self,
+        &mut self,
         single_info: Arc<Mutex<SingleDownload>>,
     ) -> Result<(), DownloadError> {
         let mut info = single_info.lock().await;
@@ -181,6 +180,10 @@ impl DownloadManager {
 
         info.total_length = http_response.content_length().unwrap_or(0) as usize;
         info.state = State::Downloading;
+
+        {
+            self.active_urls.lock().await.push(info.url.clone());
+        }
 
         let mut stream = http_response.bytes_stream();
         let mut file = BufWriter::with_capacity(
@@ -249,7 +252,7 @@ impl DownloadManager {
     /// Retry upto 2 times.
     #[inline]
     async fn attempt_download(
-        &self,
+        &mut self,
         single_info: Arc<Mutex<SingleDownload>>,
     ) -> Result<(), DownloadError> {
         let mut retries = 2;
@@ -277,12 +280,22 @@ impl DownloadManager {
         let semaphore = Arc::new(Semaphore::new(10));
 
         let mut tasks = Vec::new();
+
         for single_info in &self.infos {
+            if self
+                .active_urls
+                .lock()
+                .await
+                .contains(&single_info.1.lock().await.url.trim().to_string())
+            {
+                warn!("URL already present");
+                continue;
+            }
+
             let single_info = Arc::clone(single_info.1);
             let permit = semaphore.clone().acquire_owned().await.unwrap();
 
-            let this = self.clone();
-
+            let mut this = self.clone();
             tasks.push(tokio::spawn(async move {
                 if let Err(err) = this.attempt_download(single_info).await {
                     error!("Failed to download the request.\nMore: {err:#?}");
