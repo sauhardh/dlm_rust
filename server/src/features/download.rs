@@ -98,8 +98,8 @@ impl DownloadManager {
                 warn!("URL is already downloading");
                 continue;
             }
-            self.no_of_downloads = active_urls.len();
 
+            self.no_of_downloads = active_urls.len();
             let id: usize = active_urls.len() + 1;
 
             self.infos.insert(

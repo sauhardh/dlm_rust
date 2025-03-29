@@ -96,6 +96,7 @@ enum Event {
 
 fn handle_event(update_tx: UnboundedSender<Event>) {
     let tick_rate = Duration::from_millis(200);
+
     tokio::spawn(async move {
         let mut last_tick = Instant::now();
 
@@ -225,6 +226,7 @@ impl HandleInput {
 
     fn delete_char(&mut self) {
         let is_not_cursor_leftmost = self.character_idx != 0;
+
         if is_not_cursor_leftmost {
             let current_index = self.character_idx;
             let from_left_to_current_index = current_index - 1;
@@ -357,8 +359,6 @@ impl App {
         // Paragraph Info top
         let msg_one = vec![
             "Press ".into(),
-            "q".bold().underlined(),
-            " / ".into(),
             "Esc".bold().underlined(),
             " to quit".into(),
         ];
@@ -410,17 +410,18 @@ impl App {
                     _ => Style::default(),
                 };
 
+                let completed_progress: Option<Line<'static>> = if data.status == "Completed" {
+                    Some(self.progress_design(20, 100))
+                } else {
+                    None
+                };
+
                 // Create cells with proper styling
                 Row::new(vec![
                     Cell::from(id.to_string()),
                     Cell::from(data.name.to_string()),
-                    Cell::from(if data.status == "Completed" && data.total_length == 0 {
-                        Line::from(vec![
-                            Span::raw("["),
-                            Span::styled("█".repeat(20), Style::default().fg(Color::Magenta)),
-                            Span::raw("]"),
-                            Span::raw(format!("100%")),
-                        ])
+                    Cell::from(if completed_progress.is_some() {
+                        completed_progress.unwrap()
                     } else {
                         self.progress_bar(data.progress, data.total_length)
                     }),
@@ -456,13 +457,8 @@ impl App {
         if total_length != 0 {
             let percent = (progress as f64 / 100.0) as f64;
             let filled = (percent * 20.0).round() as usize;
-            Line::from(vec![
-                Span::raw("["),
-                Span::styled("█".repeat(filled), Style::default().fg(Color::Magenta)),
-                Span::raw(" ".repeat(20 - filled)),
-                Span::raw("]"),
-                Span::raw(format!("{:>3.0}%", progress)),
-            ])
+
+            self.progress_design(filled, progress)
         } else {
             static SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             Line::from(vec![
@@ -478,12 +474,23 @@ impl App {
     }
 
     #[inline]
+    fn progress_design(&self, filled: usize, progress: usize) -> Line<'static> {
+        Line::from(vec![
+            Span::raw("["),
+            Span::styled("█".repeat(filled), Style::default().fg(Color::Magenta)),
+            Span::raw(" ".repeat(20 - filled)),
+            Span::raw("]"),
+            Span::raw(format!("{:>3.0}%", progress)),
+        ])
+    }
+
+    #[inline]
     fn add_tabs(&self) -> Tabs<'static> {
         // Tab Mode
         let tab_titles = CommandTab::iter().map(|tab| {
             let style = if tab == self.selected_tab {
                 Style::default()
-                    .fg(Color::LightBlue)
+                    .fg(Color::Blue)
                     .bg(Color::Yellow)
                     .add_modifier(Modifier::BOLD | Modifier::ITALIC)
             } else {
