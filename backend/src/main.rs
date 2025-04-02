@@ -151,6 +151,7 @@ impl SharedState {
 
 #[tokio::main]
 async fn main() {
+    // Uncomment this if you want to use tokio-console.
     // console_subscriber::init();
 
     tracing_subscriber::registry()
