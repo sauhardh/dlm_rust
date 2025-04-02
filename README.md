@@ -9,7 +9,7 @@ Built with `ratatui` for the terminal interface and `tokio-console` for async ta
 ## 📝 NOTE
 
 > Currently only supports **UNIX** systems due to the use of `Unix Domain Socket` for IPC.  
-> Windows support via `named_pipe` is planned. *(Work In Progress)*.
+> Windows support via `named_pipe` is planned. *(Work In Progress)*. <br/>
 > Uncomment this `console_subscriber::init();` on `server/src/main.rs` to use tokio-console.
 
 - **`backend` directory**: Contains core downloading logic (pausing/resuming via thread locking).  
