@@ -64,3 +64,7 @@ cargo run
 ### Example
 
 !["example"](./assets/example.png)
+
+*multi_download*
+
+!["example2](./assets/example2.png)
