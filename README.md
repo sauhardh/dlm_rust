@@ -32,6 +32,7 @@ Built with `ratatui` for the terminal interface and `tokio-console` for async ta
 ## 🚧 TODO
 
 - [ ] Windows support via `named_pipe`  
+- [ ] Error handling
 
 ---
 
